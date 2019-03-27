@@ -45,6 +45,9 @@ void init_connections(void) {
 void exit_connections(void) {
 	list_delete_list(connection_list);
 	free_connection(everyone);
+	//dailei add
+	connection_list = NULL;
+	everyone = NULL;
 }
 
 connection_t *new_connection(void) {

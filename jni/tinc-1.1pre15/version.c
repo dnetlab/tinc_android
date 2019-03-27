@@ -18,8 +18,8 @@
 */
 
 #include "version.h"
-#include "version_git.h"
-#include "../config.h"
+//#include "version_git.h"
+#include "config.h"
 
 /* This file is always rebuilt (even if there are no changes) so that the following is updated */
 const char* const BUILD_DATE = __DATE__;

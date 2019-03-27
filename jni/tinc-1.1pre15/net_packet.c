@@ -47,6 +47,7 @@
 #include "route.h"
 #include "utils.h"
 #include "xalloc.h"
+#include <sys/socket.h>
 
 #ifndef MAX
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
@@ -1262,12 +1263,14 @@ void send_packet(node_t *n, vpn_packet_t *packet) {
 	// If it's for myself, write it to the tun/tap device.
 
 	if(n == myself) {
+#if 0
 		if(overwrite_mac) {
 			 memcpy(DATA(packet), mymac.x, ETH_ALEN);
 			 // Use an arbitrary fake source address.
 			 memcpy(DATA(packet) + ETH_ALEN, DATA(packet), ETH_ALEN);
 			 DATA(packet)[ETH_ALEN * 2 - 1] ^= 0xFF;
 		}
+#endif
 		n->out_packets++;
 		n->out_bytes += packet->len;
 		devops.write(packet);

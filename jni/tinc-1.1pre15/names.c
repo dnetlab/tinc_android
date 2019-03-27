@@ -131,21 +131,44 @@ void make_names(bool daemon) {
 }
 
 void free_names(void) {
-	free(identname);
-	free(netname);
-	free(unixsocketname);
-	free(pidfilename);
-	free(logfilename);
-	free(confbase);
-	free(confdir);
-	free(myname);
-
-	identname = NULL;
-	netname = NULL;
-	unixsocketname = NULL;
-	pidfilename = NULL;
-	logfilename = NULL;
-	confbase = NULL;
-	confdir = NULL;
-	myname = NULL;
+	if (identname)
+	{
+		free(identname);
+		identname = NULL;
+	}
+	if (netname)
+	{
+		free(netname);
+		netname = NULL;
+	}
+	if (unixsocketname)
+	{
+		free(unixsocketname);
+		unixsocketname = NULL;
+	}
+	if (pidfilename)
+	{
+		free(pidfilename);
+		pidfilename = NULL;
+	}
+	if (logfilename)
+	{
+		free(logfilename);
+		logfilename = NULL;
+	}
+	if (confbase)
+	{
+		free(confbase);
+		confbase = NULL;
+	}
+	if (confdir)
+	{
+		free(confdir);
+		confdir = NULL;
+	}
+	if (myname)
+	{
+		free(myname);
+		myname = NULL;
+	}
 }

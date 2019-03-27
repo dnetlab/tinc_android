@@ -42,11 +42,13 @@
 #include "subnet.h"
 #include "utils.h"
 #include "xalloc.h"
+#include "tinc_call.h"
 
 #ifdef HAVE_MINIUPNPC
 #include "upnp.h"
 #endif
 
+extern int m_udpsocket;
 char *myport;
 static io_t device_io;
 devops_t devops;
@@ -256,28 +258,36 @@ static bool read_rsa_private_key(void) {
 	char *fname;
 	char *n, *d;
 
+	LOGD("read_rsa_private_key 1");
 	/* First, check for simple PrivateKey statement */
 
 	if(get_config_string(lookup_config(config_tree, "PrivateKey"), &d)) {
+	LOGD("read_rsa_private_key 1.1");
 		if(!get_config_string(lookup_config(config_tree, "PublicKey"), &n)) {
 			logger(DEBUG_ALWAYS, LOG_ERR, "PrivateKey used but no PublicKey found!");
 			free(d);
+	LOGD("read_rsa_private_key 1.2");
 			return false;
 		}
 		myself->connection->rsa = rsa_set_hex_private_key(n, "FFFF", d);
 		free(n);
 		free(d);
+	LOGD("read_rsa_private_key 1.3");
 		return myself->connection->rsa;
 	}
+	LOGD("read_rsa_private_key 2");
 
 	/* Else, check for PrivateKeyFile statement and read it */
 
 	if(!get_config_string(lookup_config(config_tree, "PrivateKeyFile"), &fname))
 		xasprintf(&fname, "%s" SLASH "rsa_key.priv", confbase);
 
+	LOGD("read_rsa_private_key 3");
 	fp = fopen(fname, "r");
 
+	LOGD("read_rsa_private_key %s", fname);
 	if(!fp) {
+		LOGD("read_key_file %s err", fname);
 		logger(DEBUG_ALWAYS, LOG_ERR, "Error reading RSA private key file `%s': %s",
 			   fname, strerror(errno));
 		if(errno == ENOENT)
@@ -290,6 +300,7 @@ static bool read_rsa_private_key(void) {
 	struct stat s;
 
 	if(fstat(fileno(fp), &s)) {
+	LOGD("read_rsa_private_key 3.1");
 		logger(DEBUG_ALWAYS, LOG_ERR, "Could not stat RSA private key file `%s': %s'", fname, strerror(errno));
 		free(fname);
 		return false;
@@ -298,6 +309,7 @@ static bool read_rsa_private_key(void) {
 	if(s.st_mode & ~0100700)
 		logger(DEBUG_ALWAYS, LOG_WARNING, "Warning: insecure file permissions for RSA private key file `%s'!", fname);
 #endif
+	LOGD("read_rsa_private_key 4");
 
 	myself->connection->rsa = rsa_read_pem_private_key(fp);
 	fclose(fp);
@@ -400,12 +412,18 @@ bool setup_myself_reloadable(void) {
 	char *space;
 	bool choice;
 
-	free(scriptinterpreter);
-	scriptinterpreter = NULL;
+	if (scriptinterpreter)
+	{
+		free(scriptinterpreter);
+		scriptinterpreter = NULL;
+	}
 	get_config_string(lookup_config(config_tree, "ScriptsInterpreter"), &scriptinterpreter);
 
-
-	free(scriptextension);
+	if (scriptextension)
+	{
+		free(scriptextension);
+		scriptextension = NULL;
+	}
 	if(!get_config_string(lookup_config(config_tree, "ScriptsExtension"), &scriptextension))
 		scriptextension = xstrdup("");
 
@@ -469,6 +487,7 @@ bool setup_myself_reloadable(void) {
 		}
 
 		free(proxy);
+		proxy = NULL;
 	}
 
 	if(get_config_bool(lookup_config(config_tree, "IndirectData"), &choice) && choice)
@@ -677,7 +696,7 @@ static bool add_listen_address(char *address, bool bindto) {
 			continue;
 
 		int udp_fd = setup_vpn_in_socket((sockaddr_t *) aip->ai_addr);
-
+		m_udpsocket = udp_fd;
 		if(udp_fd < 0) {
 			close(tcp_fd);
 			continue;
@@ -723,57 +742,88 @@ void device_disable(void) {
 		devops.disable();
 }
 
+//dailei add, for arp request and response in tun
+static void random_fake_mac(mac_t *addr)
+{
+	int i;
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	srandom(tv.tv_usec);
+	for(i = 0; i < 6; i++)
+	{
+		uint8_t tmp = random() % 256;
+		addr->x[i] = tmp;
+	}
+	return;
+}
+
 /*
   Configure node_t myself and set up the local sockets (listen only)
 */
 static bool setup_myself(void) {
+	LOGD("setup_myself 1");
 	char *name, *hostname, *cipher, *digest, *type;
 	char *address = NULL;
 	bool port_specified = false;
 
+	LOGD("setup_myself 2");
 	if(!(name = get_name())) {
 		logger(DEBUG_ALWAYS, LOG_ERR, "Name for tinc daemon required!");
 		return false;
 	}
+	LOGD("setup_myself 3");
 
 	myname = xstrdup(name);
 	myself = new_node();
+	//dailei add, for arp request and response
+	timerclear(&myself->arp_request_time);
+	myself->have_mac = 1;
+	random_fake_mac(&myself->node_mac);
 	myself->connection = new_connection();
 	myself->name = name;
 	myself->connection->name = xstrdup(name);
 	read_host_config(config_tree, name);
 
+	LOGD("setup_myself 4");
 	if(!get_config_string(lookup_config(config_tree, "Port"), &myport))
 		myport = xstrdup("655");
 	else
 		port_specified = true;
 
+	LOGD("setup_myself 5");
 	myself->connection->options = 0;
 	myself->connection->protocol_major = PROT_MAJOR;
 	myself->connection->protocol_minor = PROT_MINOR;
 
 	myself->options |= PROT_MINOR << 24;
 
+	LOGD("setup_myself 6");
 #ifdef DISABLE_LEGACY
 	experimental = read_ecdsa_private_key();
+	LOGD("setup_myself 6.1 experimental = %d", experimental);
 	if(!experimental) {
 		logger(DEBUG_ALWAYS, LOG_ERR, "No private key available, cannot start tinc!");
+	LOGD("setup_myself 6.1.1");
 		return false;
 	}
 #else
+	LOGD("setup_myself 6.2");
 	if(!get_config_bool(lookup_config(config_tree, "ExperimentalProtocol"), &experimental)) {
 		experimental = read_ecdsa_private_key();
 		if(!experimental)
 			logger(DEBUG_ALWAYS, LOG_WARNING, "Support for SPTPS disabled.");
 	} else {
+	LOGD("setup_myself 6.2.1");
 		if(experimental && !read_ecdsa_private_key())
 			return false;
 	}
 
 	if(!read_rsa_private_key()) {
+	LOGD("setup_myself 6.2.2");
 		if(experimental) {
 			logger(DEBUG_ALWAYS, LOG_WARNING, "Support for legacy protocol disabled.");
 		} else {
+	LOGD("setup_myself 6.2.3");
 			logger(DEBUG_ALWAYS, LOG_ERR, "No private keys available, cannot start tinc!");
 			return false;
 		}
@@ -782,6 +832,7 @@ static bool setup_myself(void) {
 
 	/* Ensure myport is numeric */
 
+	LOGD("setup_myself 7");
 	if(!atoi(myport)) {
 		struct addrinfo *ai = str2addrinfo("localhost", myport, SOCK_DGRAM);
 		sockaddr_t sa;
@@ -792,6 +843,7 @@ static bool setup_myself(void) {
 		sockaddr2str(&sa, NULL, &myport);
 	}
 
+	LOGD("setup_myself 8");
 	/* Read in all the subnets specified in the host configuration file */
 
 	for(config_t *cfg = lookup_config(config_tree, "Subnet"); cfg; cfg = lookup_config_next(config_tree, cfg)) {
@@ -803,15 +855,18 @@ static bool setup_myself(void) {
 		subnet_add(myself, subnet);
 	}
 
+	LOGD("setup_myself 9");
 	/* Check some options */
 
 	if(!setup_myself_reloadable())
 		return false;
 
+	LOGD("setup_myself 10");
 	get_config_bool(lookup_config(config_tree, "StrictSubnets"), &strictsubnets);
 	get_config_bool(lookup_config(config_tree, "TunnelServer"), &tunnelserver);
 	strictsubnets |= tunnelserver;
 
+	LOGD("setup_myself 11");
 	if(get_config_int(lookup_config(config_tree, "MaxConnectionBurst"), &max_connection_burst)) {
 		if(max_connection_burst <= 0) {
 			logger(DEBUG_ALWAYS, LOG_ERR, "MaxConnectionBurst cannot be negative!");
@@ -819,6 +874,7 @@ static bool setup_myself(void) {
 		}
 	}
 
+	LOGD("setup_myself 12");
 	if(get_config_int(lookup_config(config_tree, "UDPRcvBuf"), &udp_rcvbuf)) {
 		if(udp_rcvbuf < 0) {
 			logger(DEBUG_ALWAYS, LOG_ERR, "UDPRcvBuf cannot be negative!");
@@ -826,6 +882,7 @@ static bool setup_myself(void) {
 		}
 	}
 
+	LOGD("setup_myself 13");
 	if(get_config_int(lookup_config(config_tree, "UDPSndBuf"), &udp_sndbuf)) {
 		if(udp_sndbuf < 0) {
 			logger(DEBUG_ALWAYS, LOG_ERR, "UDPSndBuf cannot be negative!");
@@ -833,6 +890,7 @@ static bool setup_myself(void) {
 		}
 	}
 
+	LOGD("setup_myself 14");
 	int replaywin_int;
 	if(get_config_int(lookup_config(config_tree, "ReplayWindow"), &replaywin_int)) {
 		if(replaywin_int < 0) {
@@ -883,6 +941,7 @@ static bool setup_myself(void) {
 	free(digest);
 #endif
 
+	LOGD("setup_myself 15");
 	/* Compression */
 
 	if(get_config_int(lookup_config(config_tree, "Compression"), &myself->incompression)) {
@@ -903,13 +962,16 @@ static bool setup_myself(void) {
 	myself->last_state_change = now.tv_sec;
 	myself->status.sptps = experimental;
 	node_add(myself);
+	LOGD("setup_myself 16");
 
 	graph();
 
+	LOGD("setup_myself 17");
 	load_all_nodes();
 
 	/* Open device */
 
+	LOGD("setup_myself 18");
 	devops = os_devops;
 
 	if(get_config_string(lookup_config(config_tree, "DeviceType"), &type)) {
@@ -932,14 +994,18 @@ static bool setup_myself(void) {
 		free(type);
 	}
 
+	LOGD("setup_myself 19");
 	get_config_bool(lookup_config(config_tree, "DeviceStandby"), &device_standby);
 
+	LOGD("setup_myself 20");
 	if(!devops.setup())
 		return false;
 
+	LOGD("setup_myself 21");
 	if(device_fd >= 0)
 		io_add(&device_io, handle_device_data, NULL, device_fd, IO_READ);
 
+	LOGD("setup_myself 22");
 	/* Open sockets */
 
 	if(!do_detach && getenv("LISTEN_FDS")) {
@@ -983,15 +1049,18 @@ static bool setup_myself(void) {
 			memcpy(&listen_socket[i].sa, &sa, salen);
 		}
 	} else {
+		LOGD("setup_myself 22.1");
 		listen_sockets = 0;
 		int cfgs = 0;
 
+		LOGD("setup_myself 22.2");
 		for(config_t *cfg = lookup_config(config_tree, "BindToAddress"); cfg; cfg = lookup_config_next(config_tree, cfg)) {
 			cfgs++;
 			get_config_string(cfg, &address);
 			if(!add_listen_address(address, true))
 				return false;
 		}
+		LOGD("setup_myself 22.3");
 
 		for(config_t *cfg = lookup_config(config_tree, "ListenAddress"); cfg; cfg = lookup_config_next(config_tree, cfg)) {
 			cfgs++;
@@ -999,16 +1068,20 @@ static bool setup_myself(void) {
 			if(!add_listen_address(address, false))
 				return false;
 		}
+		LOGD("setup_myself 22.4");
 
 		if(!cfgs)
 			if(!add_listen_address(address, NULL))
 				return false;
+		LOGD("setup_myself 22.5");
 	}
+	LOGD("setup_myself 23");
 
 	if(!listen_sockets) {
 		logger(DEBUG_ALWAYS, LOG_ERR, "Unable to create any listening socket!");
 		return false;
 	}
+	LOGD("setup_myself 24");
 
 	/* If no Port option was specified, set myport to the port used by the first listening socket. */
 
@@ -1023,6 +1096,7 @@ static bool setup_myself(void) {
 		}
 	}
 
+	LOGD("setup_myself 25");
 	xasprintf(&myself->hostname, "MYSELF port %s", myport);
 	myself->connection->hostname = xstrdup(myself->hostname);
 
@@ -1030,6 +1104,7 @@ static bool setup_myself(void) {
 	get_config_string(lookup_config(config_tree, "UPnP"), &upnp);
 	bool upnp_tcp = false;
 	bool upnp_udp = false;
+	LOGD("setup_myself 26");
 	if (upnp) {
 		if (!strcasecmp(upnp, "yes"))
 			upnp_tcp = upnp_udp = true;
@@ -1048,6 +1123,7 @@ static bool setup_myself(void) {
 	/* Done. */
 
 	last_config_check = now.tv_sec;
+	LOGD("setup_myself 27");
 
 	return true;
 }
@@ -1056,12 +1132,14 @@ static bool setup_myself(void) {
   initialize network
 */
 bool setup_network(void) {
+	LOGD("setup_network 1");
 	init_connections();
 	init_subnets();
 	init_nodes();
 	init_edges();
 	init_requests();
 
+	LOGD("setup_network 2");
 	if(get_config_int(lookup_config(config_tree, "PingInterval"), &pinginterval)) {
 		if(pinginterval < 1) {
 			pinginterval = 86400;
@@ -1069,6 +1147,7 @@ bool setup_network(void) {
 	} else
 		pinginterval = 60;
 
+	LOGD("setup_network 3");
 	if(!get_config_int(lookup_config(config_tree, "PingTimeout"), &pingtimeout))
 		pingtimeout = 5;
 	if(pingtimeout < 1 || pingtimeout > pinginterval)
@@ -1077,18 +1156,23 @@ bool setup_network(void) {
 	if(!get_config_int(lookup_config(config_tree, "MaxOutputBufferSize"), &maxoutbufsize))
 		maxoutbufsize = 10 * MTU;
 
+	LOGD("setup_network 4");
 	if(!setup_myself())
 		return false;
 
+	LOGD("setup_network 5");
 	if(!init_control())
 		return false;
 
+	LOGD("setup_network 6");
 	if (!device_standby)
 		device_enable();
 
 	/* Run subnet-up scripts for our own subnets */
+	LOGD("setup_network 7");
 
 	subnet_update(myself, NULL, true);
+	LOGD("setup_network 8");
 
 	return true;
 }
@@ -1108,11 +1192,17 @@ void close_network_connections(void) {
 	}
 
 	if(outgoing_list)
+	{
 		list_delete_list(outgoing_list);
+		//dailei add
+		outgoing_list = NULL;
+	}
 
 	if(myself && myself->connection) {
 		subnet_update(myself, NULL, false);
 		connection_del(myself->connection);
+		//dailei add
+		myself = NULL;
 	}
 
 	for(int i = 0; i < listen_sockets; i++) {
@@ -1140,8 +1230,10 @@ void close_network_connections(void) {
 
 	exit_control();
 
+#if 0
 	free(scriptextension);
 	free(scriptinterpreter);
+#endif
 
 	return;
 }

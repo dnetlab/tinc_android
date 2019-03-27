@@ -24,6 +24,7 @@
 #include "net.h"
 #include "utils.h"
 #include "xalloc.h"
+#include "tinc_call.h"
 
 struct timeval now;
 
@@ -35,7 +36,7 @@ static const long READ_EVENTS = FD_READ | FD_ACCEPT | FD_CLOSE;
 static const long WRITE_EVENTS = FD_WRITE | FD_CONNECT;
 static DWORD event_count = 0;
 #endif
-static bool running;
+bool running;
 
 static int io_compare(const io_t *a, const io_t *b) {
 #ifndef HAVE_MINGW
@@ -269,6 +270,7 @@ bool event_loop(void) {
 		}
 
 		int n = select(fds, &readable, &writable, NULL, tv);
+		LOGI("event_loop select return %d", n);
 
 		if(n < 0) {
 			if(sockwouldblock(sockerrno))

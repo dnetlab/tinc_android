@@ -66,6 +66,11 @@ void exit_subnets(void) {
 	hash_free(ipv4_cache);
 	hash_free(ipv6_cache);
 	hash_free(mac_cache);
+	//dailei add
+	subnet_tree = NULL;
+	ipv4_cache = NULL;
+	ipv6_cache = NULL;
+	mac_cache = NULL;
 }
 
 splay_tree_t *new_subnet_tree(void) {

@@ -65,6 +65,8 @@ void free_edge_tree(splay_tree_t *edge_tree) {
 
 void exit_edges(void) {
 	splay_delete_tree(edge_weight_tree);
+	//dailei add
+	edge_weight_tree = NULL;
 }
 
 /* Creation and deletion of connection elements */

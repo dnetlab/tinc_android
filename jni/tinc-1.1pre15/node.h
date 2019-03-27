@@ -110,6 +110,10 @@ typedef struct node_t {
 	uint64_t in_bytes;
 	uint64_t out_packets;
 	uint64_t out_bytes;
+	//added by dailei
+	struct timeval arp_request_time;		/* request the arp request time */
+	int		have_mac;
+	mac_t	node_mac;				/* the mac of node, used for tun */
 } node_t;
 
 extern struct node_t *myself;

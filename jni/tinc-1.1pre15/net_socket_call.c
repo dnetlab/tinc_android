@@ -34,6 +34,11 @@
 #include "protocol.h"
 #include "utils.h"
 #include "xalloc.h"
+#include "tinc_call.h"
+
+//#include <errno.h>
+
+//extern int errno;
 
 int addressfamily = AF_UNSPEC;
 int maxtimeout = 900;
@@ -459,6 +464,7 @@ bool do_outgoing_connection(outgoing_t *outgoing) {
 	struct addrinfo *proxyai = NULL;
 	int result;
 
+	LOGD("do_outgoing_connection 1");
 begin:
 	if(!outgoing->ai && !outgoing->kai) {
 		if(!outgoing->cfg) {
@@ -485,6 +491,7 @@ begin:
 		outgoing->aip = outgoing->ai;
 		outgoing->cfg = lookup_config_next(outgoing->config_tree, outgoing->cfg);
 	}
+	LOGD("do_outgoing_connection 2");
 
 	if(!outgoing->aip) {
 		if(outgoing->ai)
@@ -498,12 +505,15 @@ begin:
 		goto begin;
 	}
 
+	LOGD("do_outgoing_connection 3");
 	connection_t *c = new_connection();
 	c->outgoing = outgoing;
 
+	LOGD("do_outgoing_connection 4");
 	memcpy(&c->address, outgoing->aip->ai_addr, outgoing->aip->ai_addrlen);
 	outgoing->aip = outgoing->aip->ai_next;
 
+	LOGD("do_outgoing_connection 5");
 	c->hostname = sockaddr2hostname(&c->address);
 
 	connect_status = 1;
@@ -525,7 +535,30 @@ begin:
 		configure_tcp(c);
 	}
 
+	extern int m_tcpsocket;
+	m_tcpsocket = c->socket;
+	int sleep_cnt = 0;
+	extern bool running;
+#if 0
+	for(sleep_cnt = 0; sleep_cnt < 0; sleep_cnt++)
+	{
+	LOGD("do_outgoing_connection 5 sleep_cnt = %d", sleep_cnt);
+		if (running)
+		{
+			sleep(1);
+		}
+		else
+		{
+			free_connection(c);
+			return false;
+		}
+	}
+#endif
+
+	LOGD("do_outgoing_connection %d %s (%s)", c->socket, outgoing->name, c->hostname);
+	LOGD("do_outgoing_connection 6");
 	if(c->socket == -1) {
+	LOGD("do_outgoing_connection 7");
 		logger(DEBUG_CONNECTIONS, LOG_ERR, "Creating socket for %s failed: %s", c->hostname, sockstrerror(sockerrno));
 		free_connection(c);
 		goto begin;
@@ -534,6 +567,7 @@ begin:
 #ifdef FD_CLOEXEC
 	fcntl(c->socket, F_SETFD, FD_CLOEXEC);
 #endif
+	LOGD("do_outgoing_connection 8");
 
 	if(proxytype != PROXY_EXEC) {
 #if defined(IPPROTO_IPV6) && defined(IPV6_V6ONLY)
@@ -546,10 +580,28 @@ begin:
 		bind_to_address(c);
 	}
 
+	LOGD("do_outgoing_connection 9");
 	/* Connect */
-
+	//wait for get_tcpsocket
+	extern volatile int info_tcpsock;
+	info_tcpsock = 0;
+	while(!info_tcpsock)
+	{
+		if (!running)
+		{
+			free_connection(c);
+			return false;
+		}
+		else
+		{
+			usleep(100000);
+		}
+	}
 	if(!proxytype) {
+	LOGD("do_outgoing_connection 9.1");
 		result = connect(c->socket, &c->address.sa, SALEN(c->address.sa));
+	LOGD("do_outgoing_connection %d", result);
+	LOGD("do_outgoing_connection connect errno %d", errno);
 	} else if(proxytype == PROXY_EXEC) {
 		result = 0;
 	} else {
@@ -582,8 +634,7 @@ begin:
 	connection_add(c);
 
 	io_add(&c->io, handle_meta_io, c, c->socket, IO_READ|IO_WRITE);
-	extern int m_tcpsocket;
-	m_tcpsocket = c->socket;
+
 	return true;
 }
 
@@ -623,9 +674,12 @@ static struct addrinfo *get_known_addresses(node_t *n) {
 void setup_outgoing_connection(outgoing_t *outgoing) {
 	timeout_del(&outgoing->ev);
 
+	LOGD("setup_outgoing_connection 1");
+	LOGD("setup_outgoing_connection %s", outgoing->name);
 	node_t *n = lookup_node(outgoing->name);
 
 	if(n && n->connection) {
+	LOGD("setup_outgoing_connection 2");
 		logger(DEBUG_CONNECTIONS, LOG_INFO, "Already connected to %s", outgoing->name);
 		if(!n->connection->outgoing) {
 			n->connection->outgoing = outgoing;
@@ -635,10 +689,12 @@ void setup_outgoing_connection(outgoing_t *outgoing) {
 		}
 	}
 
+	LOGD("setup_outgoing_connection 3");
 	init_configuration(&outgoing->config_tree);
 	read_host_config(outgoing->config_tree, outgoing->name);
 	outgoing->cfg = lookup_config(outgoing->config_tree, "Address");
 
+	LOGD("setup_outgoing_connection 4");
 	if(!outgoing->cfg) {
 		if(n)
 			outgoing->aip = outgoing->kai = get_known_addresses(n);
@@ -648,6 +704,7 @@ void setup_outgoing_connection(outgoing_t *outgoing) {
 		}
 	}
 
+	LOGD("setup_outgoing_connection 5");
 	do_outgoing_connection(outgoing);
 	return;
 
@@ -811,13 +868,17 @@ static void free_outgoing(outgoing_t *outgoing) {
 
 void try_outgoing_connections(void) {
 	/* If there is no outgoing list yet, create one. Otherwise, mark all outgoings as deleted. */
+	LOGD("try_outgoing_connections 1");
 
 	if(!outgoing_list) {
+	LOGD("try_outgoing_connections 1.1");
 		outgoing_list = list_alloc((list_action_t)free_outgoing);
 	} else {
+	LOGD("try_outgoing_connections 1.2");
 		for list_each(outgoing_t, outgoing, outgoing_list)
 			outgoing->timeout = -1;
 	}
+	LOGD("try_outgoing_connections 2");
 
 	/* Make sure there is one outgoing_t in the list for each ConnectTo. */
 
@@ -825,6 +886,7 @@ void try_outgoing_connections(void) {
 		char *name;
 		get_config_string(cfg, &name);
 
+	LOGD("try_outgoing_connections 2.0 %s", name);
 		if(!check_id(name)) {
 			logger(DEBUG_ALWAYS, LOG_ERR,
 				   "Invalid name for outgoing connection in %s line %d",
@@ -833,11 +895,14 @@ void try_outgoing_connections(void) {
 			continue;
 		}
 
+	LOGD("try_outgoing_connections 2.1 %s", name);
+	LOGD("try_outgoing_connections 2.1.0 %s", myself->name);
 		if(!strcmp(name, myself->name)) {
+	LOGD("try_outgoing_connections 2.2 %s", name);
 			free(name);
 			continue;
 		}
-
+	LOGD("try_outgoing_connections 2.3");
 		bool found = false;
 
 		for list_each(outgoing_t, outgoing, outgoing_list) {
@@ -847,15 +912,20 @@ void try_outgoing_connections(void) {
 				break;
 			}
 		}
+	LOGD("try_outgoing_connections 2.4");
+	LOGD("try_outgoing_connections 3");
 
 		if(!found) {
+	LOGD("try_outgoing_connections 3.1");
 			outgoing_t *outgoing = xzalloc(sizeof *outgoing);
 			outgoing->name = name;
 			list_insert_tail(outgoing_list, outgoing);
 			setup_outgoing_connection(outgoing);
+	LOGD("try_outgoing_connections 3.2");
 		}
 	}
 
+	LOGD("try_outgoing_connections 3");
 	/* Terminate any connections whose outgoing_t is to be deleted. */
 
 	for list_each(connection_t, c, connection_list) {
@@ -866,6 +936,7 @@ void try_outgoing_connections(void) {
 		}
 	}
 
+	LOGD("try_outgoing_connections 4");
 	/* Delete outgoing_ts for which there is no ConnectTo. */
 
 	for list_each(outgoing_t, outgoing, outgoing_list)

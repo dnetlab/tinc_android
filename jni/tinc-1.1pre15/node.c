@@ -63,6 +63,10 @@ void exit_nodes(void) {
 	splay_delete_tree(node_udp_tree);
 	splay_delete_tree(node_id_tree);
 	splay_delete_tree(node_tree);
+	//dailei add
+	node_udp_tree = NULL;
+	node_id_tree = NULL;
+	node_tree = NULL;
 }
 
 node_t *new_node(void) {

@@ -205,4 +205,6 @@ void exit_requests(void) {
 	splay_delete_tree(past_request_tree);
 
 	timeout_del(&past_request_timeout);
+	//dailei add
+	past_request_tree = NULL;
 }
